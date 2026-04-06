@@ -1,0 +1,17 @@
+# 환경변수
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+.claude/settings.local.json
+
+.playwright-mcp
