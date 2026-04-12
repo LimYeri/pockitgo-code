@@ -7,6 +7,25 @@ import { CategoryBadge } from '@/components/ui/category-badge';
 import type { Place, SchedulePin } from '@/types';
 import { cn } from '@/lib/utils';
 
+const AVATAR_COLORS = [
+  'bg-rose-400',
+  'bg-orange-400',
+  'bg-amber-400',
+  'bg-emerald-400',
+  'bg-teal-400',
+  'bg-sky-400',
+  'bg-violet-400',
+  'bg-pink-400',
+];
+
+function getAvatarColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
 function getDayNumber(targetDate: string, startDate: string): number {
   const diff = new Date(targetDate).getTime() - new Date(startDate).getTime();
   return Math.floor(diff / (1000 * 60 * 60 * 24)) + 1;
@@ -42,14 +61,9 @@ export function PlaceCard({
       <CardContent className="flex flex-col gap-2 py-3">
         {/* 상단: 카테고리 뱃지 + 장소명 + 필수 방문 버튼 */}
         <div className="flex items-start justify-between gap-2">
-          <div className="flex flex-col gap-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <CategoryBadge category={place.category} />
-              <span className="text-sm font-medium text-foreground truncate">{place.name}</span>
-            </div>
-            {memberNickname && (
-              <span className="text-xs text-muted-foreground">추가: {memberNickname}</span>
-            )}
+          <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <CategoryBadge category={place.category} />
+            <span className="text-sm font-medium text-foreground truncate">{place.name}</span>
           </div>
 
           {/* 버튼 영역: 필수 방문 토글 + 삭제 */}
@@ -79,12 +93,14 @@ export function PlaceCard({
           </div>
         </div>
 
-        {/* 메모 */}
-        {place.memo && (
-          <p className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1">{place.memo}</p>
-        )}
+        {/* 메모 — 없어도 공간 유지 */}
+        <div className="min-h-[1.75rem]">
+          {place.memo && (
+            <p className="text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1">{place.memo}</p>
+          )}
+        </div>
 
-        {/* 하단: 핀/숙소 정보 */}
+        {/* 하단: 핀/숙소 정보 + 추가한 멤버 */}
         <div className="flex items-center justify-between gap-2">
           {isAccommodation ? (
             /* 숙소: 체크인/아웃 정보 또는 등록 버튼 */
@@ -138,6 +154,21 @@ export function PlaceCard({
                 <Pin className="size-4" />
               </Button>
             )
+          )}
+
+          {/* 추가한 멤버 아바타 chip */}
+          {memberNickname && (
+            <div className="flex items-center gap-1 shrink-0 ml-auto">
+              <div
+                className={cn(
+                  'flex items-center justify-center size-5 rounded-full text-white text-[10px] font-bold shrink-0',
+                  getAvatarColor(memberNickname)
+                )}
+              >
+                {memberNickname[0].toUpperCase()}
+              </div>
+              <span className="text-xs text-muted-foreground font-medium">{memberNickname}</span>
+            </div>
           )}
         </div>
       </CardContent>

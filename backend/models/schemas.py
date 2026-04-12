@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import date, time, datetime
-from typing import Optional, Any
+from typing import Optional, Any, List
 import uuid
 
 
@@ -105,6 +105,7 @@ class ItineraryDayResponse(BaseModel):
     ordered_places: list[Any]
     alternatives: dict[str, list[AlternativePlace]]
     excluded_places: list[ExcludedPlace]
+    validation_warnings: Optional[List[str]] = []
 
 
 class ItineraryGenerateResponse(BaseModel):
@@ -122,3 +123,11 @@ class ReplaceRequest(BaseModel):
 class UpdateOrderRequest(BaseModel):
     date: str
     ordered_places: list[dict]
+
+
+class AddItineraryPlaceRequest(BaseModel):
+    kakao_place_id: str
+    name: str
+    lat: float
+    lng: float
+    category: str

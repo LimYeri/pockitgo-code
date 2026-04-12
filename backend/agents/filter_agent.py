@@ -7,6 +7,8 @@ is_must_visit=true 장소는 무조건 valid_places에 포함.
 import asyncio
 from datetime import date
 
+import httpx
+
 from agents.state import ItineraryState
 from agents.time_utils import DEFAULT_FALLBACK_HOURS, DEFAULT_HOURS
 from services.hours_resolver import hours_resolver
@@ -46,10 +48,11 @@ async def filter_agent(state: ItineraryState) -> dict:
     sema_g = asyncio.Semaphore(5)
     request_cache: dict = {}
 
-    hours_results = await asyncio.gather(
-        *[hours_resolver(p, sema_g, request_cache) for p in places],
-        return_exceptions=True,
-    )
+    async with httpx.AsyncClient(timeout=10.0) as shared_client:
+        hours_results = await asyncio.gather(
+            *[hours_resolver(p, sema_g, request_cache, shared_client) for p in places],
+            return_exceptions=True,
+        )
 
     # 예외 발생 시 해당 카테고리의 DEFAULT_HOURS로 대체
     places_with_hours = []

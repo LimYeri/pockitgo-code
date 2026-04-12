@@ -1,4 +1,4 @@
-import { GripVertical, BookOpen } from 'lucide-react';
+import { GripVertical, BookOpen, Trash2 } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { CategoryBadge } from '@/components/ui/category-badge';
@@ -12,6 +12,7 @@ interface TimelineCardProps {
   travelTimeAfter: number | null; // 다음 장소까지 이동 시간(분), 마지막 장소는 null
   alternatives: AlternativePlace[] | undefined;
   onOpenPlanBC: (place: ItineraryOrderedPlace) => void;
+  onRemove?: () => void;
 }
 
 export function TimelineCard({
@@ -20,6 +21,7 @@ export function TimelineCard({
   travelTimeAfter,
   alternatives,
   onOpenPlanBC,
+  onRemove,
 }: TimelineCardProps) {
   const hasAlternatives = alternatives && alternatives.length > 0;
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id: place.place_id });
@@ -47,19 +49,32 @@ export function TimelineCard({
         <div className="flex flex-col gap-1 flex-1 min-w-0">
           <div className="flex items-start justify-between gap-2">
             <span className="text-sm font-semibold truncate">{place.name}</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => onOpenPlanBC(place)}
-              className={cn(
-                'h-7 px-2 text-xs shrink-0',
-                hasAlternatives ? 'text-primary' : 'text-muted-foreground'
+            <div className="flex items-center gap-1 shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => onOpenPlanBC(place)}
+                className={cn(
+                  'h-7 px-2 text-xs',
+                  hasAlternatives ? 'text-primary' : 'text-muted-foreground'
+                )}
+                title="대안 장소 보기"
+              >
+                <BookOpen className="size-3 mr-1" />
+                대안
+              </Button>
+              {onRemove && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onRemove}
+                  className="h-7 px-2 text-muted-foreground hover:text-destructive"
+                  title="장소 제거"
+                >
+                  <Trash2 className="size-3" />
+                </Button>
               )}
-              title="대안 장소 보기"
-            >
-              <BookOpen className="size-3 mr-1" />
-              대안
-            </Button>
+            </div>
           </div>
           <CategoryBadge category={place.category} />
           {place.scheduled_time && (

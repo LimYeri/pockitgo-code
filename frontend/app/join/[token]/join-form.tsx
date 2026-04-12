@@ -34,6 +34,7 @@ export default function JoinForm({ token, room }: { token: string; room: TravelR
         if (session?.user) {
           const member = await getMemberByAuthId(room.id, session.user.id);
           if (member) {
+            localStorage.setItem('memberId', member.id);
             toast.success('이미 참여한 여행방입니다. 입장합니다...');
             router.push(`/room/${room.id}`);
             return;
@@ -71,7 +72,8 @@ export default function JoinForm({ token, room }: { token: string; room: TravelR
       }
 
       // 멤버 등록 API 호출
-      await joinRoom(room.id, { nickname: nickname.trim(), auth_id: authId });
+      const member = await joinRoom(room.id, { nickname: nickname.trim(), auth_id: authId });
+      localStorage.setItem('memberId', member.id);
 
       router.push(`/room/${room.id}`);
     } catch (err) {

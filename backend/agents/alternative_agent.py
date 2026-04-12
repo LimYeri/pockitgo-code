@@ -188,14 +188,16 @@ async def find_external(
     source 필드는 find_alternatives에서 부착하므로 여기서는 미포함.
     """
     alts: list[dict] = []
+    seen_ids: set[str] = set()
 
     for radius in SEARCH_RADII:
         candidates = await search_nearby(lat, lng, category, radius, size=8)
 
         for r in candidates:
             kakao_id = r.get("id", "")
-            if kakao_id in exclude_ids:
+            if kakao_id in exclude_ids or kakao_id in seen_ids:
                 continue
+            seen_ids.add(kakao_id)
 
             kakao_category_code = r.get("category_group_code", "")
             alt_category = KAKAO_CODE_TO_CATEGORY.get(kakao_category_code, category)

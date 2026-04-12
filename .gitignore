@@ -15,3 +15,7 @@ Thumbs.db
 .claude/settings.local.json
 
 .playwright-mcp
+
+.mcp.json
+
+shrimp-rules.md

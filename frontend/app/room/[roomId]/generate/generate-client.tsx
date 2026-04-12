@@ -254,14 +254,17 @@ export default function GenerateClient({ room, places, pins }: GenerateClientPro
         <div className="flex items-center gap-2">
           <Clock className="size-4 text-primary" />
           <span className="text-sm font-semibold">하루 활동 시간</span>
+          <span className="ml-auto text-xs font-medium text-amber-600 bg-amber-50 border border-amber-200 rounded-full px-2 py-0.5">
+            추후 개발 예정
+          </span>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 opacity-50 pointer-events-none">
           <div className="flex flex-col gap-1 flex-1">
             <label className="text-xs text-muted-foreground">시작 시간</label>
             <select
               value={startTime}
-              onChange={(e) => setStartTime(e.target.value)}
-              className="rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              disabled
+              className="rounded-lg border bg-muted px-3 py-2 text-sm cursor-not-allowed"
             >
               {START_HOUR_OPTIONS.map((h) => (
                 <option key={h} value={h}>{h}</option>
@@ -273,8 +276,8 @@ export default function GenerateClient({ room, places, pins }: GenerateClientPro
             <label className="text-xs text-muted-foreground">종료 시간</label>
             <select
               value={endTime}
-              onChange={(e) => setEndTime(e.target.value)}
-              className="rounded-lg border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              disabled
+              className="rounded-lg border bg-muted px-3 py-2 text-sm cursor-not-allowed"
             >
               {END_HOUR_OPTIONS.map((h) => (
                 <option key={h} value={h}>{h}</option>
@@ -282,6 +285,7 @@ export default function GenerateClient({ room, places, pins }: GenerateClientPro
             </select>
           </div>
         </div>
+        <p className="text-xs text-muted-foreground">현재 MVP 버전에서는 활동 시간 설정이 지원되지 않습니다.</p>
       </div>
 
       {/* 숙소 모드 (위시리스트 숙소 유무에 따라 자동 설정, 변경 불가) */}

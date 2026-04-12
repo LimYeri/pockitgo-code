@@ -9,6 +9,7 @@ from datetime import date as date_type, timedelta
 
 from agents.state import ItineraryState
 from agents.time_utils import (
+    CONSECUTIVE_RESTRICTED,
     DEFAULT_FALLBACK_HOURS,
     DEFAULT_HOURS,
     MAX_CATEGORY_PER_DAY,
@@ -18,6 +19,7 @@ from agents.time_utils import (
     MEAL_WINDOWS,
     MIN_TRAVEL_MIN,
     RESERVATION_LATE_SHIFT_MAX,
+    RESERVATION_LATE_SHIFT_MAX_RESTAURANT,
     RESERVATION_TOLERANCE,
     STAY_DURATION,
     STAY_DURATION_RANGE,
@@ -93,7 +95,7 @@ def day_allocation_greedy(valid_places: list[dict], n_days: int) -> list[list[di
     """valid_places를 n_days개 날짜 클러스터로 분배한다 (같은 날 = 가까운 곳).
 
     - seed 선택: must_visit 장소 중 지리적 최대 분산 n_days개
-    - remaining: argmin haversine → best_day, 편중 방지(len < avg+1)
+    - remaining: argmin haversine → best_day, 편중 방지(len < avg*1.5)
     """
     if n_days <= 0 or not valid_places:
         return [[] for _ in range(n_days)]
@@ -118,7 +120,7 @@ def day_allocation_greedy(valid_places: list[dict], n_days: int) -> list[list[di
         """장소를 배정할 최적 날짜 인덱스를 반환한다. 없으면 -1.
 
         - hard cap(MAX_PLACES_PER_DAY)은 항상 적용
-        - balance 체크(avg+1)는 ignore_balance=False 일 때만 적용
+        - balance 체크(avg*1.5)는 ignore_balance=False 일 때만 적용
         - soft cap(MAX_CATEGORY_PER_DAY)은 ignore_soft_cap=False 일 때만 적용
         """
         best_day = -1
@@ -130,8 +132,8 @@ def day_allocation_greedy(valid_places: list[dict], n_days: int) -> list[list[di
             if len(cluster) >= MAX_PLACES_PER_DAY:
                 continue
 
-            # balance 체크: 편중 방지 (빈 클러스터 제외)
-            if not ignore_balance and cluster and len(cluster) >= avg + 1:
+            # balance 체크: 편중 방지 (빈 클러스터 제외, avg*1.5로 완화)
+            if not ignore_balance and cluster and len(cluster) >= avg * 1.5:
                 continue
 
             # soft cap: 카테고리별 최대 수 제한
@@ -244,18 +246,33 @@ def anchor_extraction(
 # ---------------------------------------------------------------------------
 
 def _nearest_neighbor_tsp(free_places: list[dict], start_lat: float, start_lng: float) -> list[dict]:
-    """haversine 기반 nearest-neighbor TSP로 순서를 정렬한다."""
+    """haversine 기반 nearest-neighbor TSP로 순서를 정렬한다.
+
+    맛집·카페(CONSECUTIVE_RESTRICTED)는 동일 카테고리 연속 배치를 방지한다.
+    1순위: 직전 카테고리와 다른 카테고리 중 최근접
+    2순위: 대안 없으면 전체 remaining 중 최근접 (fallback)
+    """
     remaining = list(free_places)
     ordered = []
     cur_lat, cur_lng = start_lat, start_lng
+    prev_category: str | None = None
 
     while remaining:
+        # 직전 장소가 제한 카테고리면 다른 카테고리 후보 우선 탐색
+        if prev_category in CONSECUTIVE_RESTRICTED:
+            candidates = [p for p in remaining if p.get("category") != prev_category]
+            if not candidates:
+                candidates = remaining  # 대안 없으면 전체 fallback
+        else:
+            candidates = remaining
+
         nearest = min(
-            remaining,
+            candidates,
             key=lambda p: haversine_meters(cur_lat, cur_lng, p["lat"], p["lng"]),
         )
         ordered.append(nearest)
         cur_lat, cur_lng = nearest["lat"], nearest["lng"]
+        prev_category = nearest.get("category")
         remaining.remove(nearest)
 
     return ordered
@@ -540,6 +557,30 @@ def _next_meal_slot_start(current_min: int) -> int | None:
     return None
 
 
+def _check_order_warning(
+    place: dict,
+    last_restaurant_end_min: int | None,
+    current_start_min: int,
+) -> dict | None:
+    """맛집 방문 간격 위반을 감지해 place_warning을 반환한다 (SOFT_CONSTRAINT).
+
+    - 맛집 3시간 미만 간격: RESTAURANT_TOO_CLOSE 경고
+    - 동일 카테고리 연속 배치는 TSP 단계에서 하드 제약으로 방지되므로 여기서는 미검사
+    - 이미 place_warning이 있으면 덮어쓰지 않음 (호출 측에서 처리)
+    """
+    if place.get("category") == "맛집" and last_restaurant_end_min is not None:
+        gap = current_start_min - last_restaurant_end_min
+        if gap < 180:
+            return {
+                "warning_type": "RESTAURANT_TOO_CLOSE",
+                "warning_message": (
+                    f"직전 맛집 방문 종료 후 {gap}분 만에 다음 맛집이 배치됩니다. "
+                    "최소 3시간 간격을 권장합니다."
+                ),
+            }
+    return None
+
+
 def _try_shift_later(
     place: dict,
     current_start_min: int,
@@ -596,6 +637,7 @@ def timeline_validation(
     start_min = day_start_min
     result: list[dict] = []
     prev_place: dict | None = prev_stay
+    last_restaurant_end_min: int | None = None  # Order Warning 추적용
     prev_id: str | None = prev_stay["id"] if prev_stay else None
     seen_place_ids: set[str] = set()  # 같은 날 중복 장소 탐지용
 
@@ -633,8 +675,8 @@ def timeline_validation(
                 "category": category,
                 "is_must_visit": place.get("is_must_visit", False),
                 "kakao_place_id": place.get("kakao_place_id"),
-                "start_at": from_mod(start_min),   # 도착 시각 (표시용)
-                "end_at": None,                     # 종료 없음 (숙소는 하루 끝)
+                "start_at": from_mod(start_min),        # 도착 시각 (표시용)
+                "end_at": from_mod(MAX_DAY_END),        # 하루 종료 시각 고정 (프론트 null 방지)
                 "travel_minutes_from_prev": travel,
                 "pin_type": "STAY",
                 "hours_source": place.get("hours_source", "DEFAULT"),
@@ -662,7 +704,13 @@ def timeline_validation(
                     start_min = res_time
                 else:
                     late_by = start_min - res_time
-                    if late_by <= RESERVATION_LATE_SHIFT_MAX:
+                    # 맛집 예약은 30분 지각이 사실상 노쇼 → 15분으로 강화
+                    late_max = (
+                        RESERVATION_LATE_SHIFT_MAX_RESTAURANT
+                        if category == "맛집"
+                        else RESERVATION_LATE_SHIFT_MAX
+                    )
+                    if late_by <= late_max:
                         # 소폭 지각: LATE warning 후 계속
                         late_warning = {
                             "warning_type": "RESERVATION_LATE",
@@ -671,7 +719,7 @@ def timeline_validation(
                             ),
                         }
                     else:
-                        # 대폭 지각: conflict 처리
+                        # 지각 폭 초과: conflict 처리
                         conflict_override = True
         # 맛집 식사 시간대 보정 (RESERVATION 아닌 경우만)
         elif category == "맛집":
@@ -768,6 +816,11 @@ def timeline_validation(
         if late_warning is not None and place.get("place_warning") is None:
             place = {**place, "place_warning": late_warning}
 
+        # Order Warning: 맛집 3시간 간격 미만 감지 (기존 경고 없을 때만)
+        order_warn = _check_order_warning(place, last_restaurant_end_min, start_min)
+        if order_warn and place.get("place_warning") is None:
+            place = {**place, "place_warning": order_warn}
+
         # ordered_places 출력 항목 구성
         output_place = {
             "place_id": place_id,
@@ -790,6 +843,10 @@ def timeline_validation(
         prev_place = place
         prev_id = place_id
         start_min = end_min + travel
+
+        # Order Warning 추적: 맛집 종료 시각 갱신
+        if category == "맛집":
+            last_restaurant_end_min = end_min
 
     return result, excluded_places
 

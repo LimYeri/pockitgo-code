@@ -69,6 +69,12 @@ RESERVATION_TOLERANCE: int = 10
 # RESERVATION 핀 지각 최대 시프트 (분) — 지각 시 일정 뒤로 밀기 한도
 RESERVATION_LATE_SHIFT_MAX: int = 30
 
+# 맛집 RESERVATION 전용 지각 허용 폭 (분) — 30분 지각은 사실상 노쇼이므로 강화
+RESERVATION_LATE_SHIFT_MAX_RESTAURANT: int = 15
+
+# TSP 연속 배치 제한 카테고리 — 동일 카테고리 연속 배치 방지 대상
+CONSECUTIVE_RESTRICTED: frozenset = frozenset({"맛집", "카페"})
+
 
 def get_stay_duration(category: str, n_places_today: int) -> int:
     """장소 수에 따라 카테고리별 체류 시간을 동적으로 계산한다.

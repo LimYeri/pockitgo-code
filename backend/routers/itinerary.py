@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from agents.pipeline import get_pipeline
 from core.supabase import supabase
 from models.schemas import (
+    AddItineraryPlaceRequest,
     ItineraryDayResponse,
     ItineraryGenerateResponse,
     ReplaceRequest,
@@ -41,6 +42,21 @@ STEP_MESSAGES: dict[str, dict[str, str]] = {
 }
 
 TARGET_NODES = set(STEP_MESSAGES.keys())
+
+
+def _attach_travel_time_after(places: list[dict]) -> list[dict]:
+    """ordered_places의 travel_minutes_from_prev를 travel_time_after로 변환한다.
+
+    Planner Agent는 각 장소에 이전 장소→현재 장소 이동시간(travel_minutes_from_prev)을 저장한다.
+    프론트엔드 TimelineCard는 현재 장소→다음 장소 이동시간(travel_time_after)을 기대하므로
+    upsert 직전에 변환하여 저장한다.
+    """
+    for i in range(len(places)):
+        if i < len(places) - 1:
+            places[i]["travel_time_after"] = places[i + 1].get("travel_minutes_from_prev")
+        else:
+            places[i]["travel_time_after"] = None
+    return places
 
 
 async def _generate_stream(
@@ -87,6 +103,8 @@ async def _generate_stream(
         validation_warnings = accumulated.get("validation_warnings") or []
 
         for day in days:
+            # travel_minutes_from_prev → travel_time_after 변환 (초기 로드 시 이동 시간 표시용)
+            day["ordered_places"] = _attach_travel_time_after(day["ordered_places"])
             day_place_ids = {p["place_id"] for p in day.get("ordered_places", [])}
             day_alternatives = {
                 k: v for k, v in alternatives.items() if k in day_place_ids
@@ -283,6 +301,7 @@ async def replace_itinerary_place(
             "ordered_places": ordered_places,
             "alternatives": alternatives,
             "excluded_places": row.get("excluded_places") or [],
+            "validation_warnings": row.get("validation_warnings") or [],
         },
         on_conflict="room_id,date",
     ).execute()
@@ -292,7 +311,34 @@ async def replace_itinerary_place(
         ordered_places=ordered_places,
         alternatives=alternatives,
         excluded_places=row.get("excluded_places") or [],
+        validation_warnings=row.get("validation_warnings") or [],
     )
+
+
+async def _recalculate_all_travel_times(places: list[dict]) -> list[dict]:
+    """ordered_places 전구간 이동 시간을 재계산한다.
+
+    연속된 장소 쌍마다 Kakao Mobility API를 호출하고,
+    마지막 장소의 travel_time_after는 None으로 설정한다.
+    """
+    for i in range(len(places) - 1):
+        cur = places[i]
+        nxt = places[i + 1]
+        try:
+            t = await kakao_service.get_travel_time(
+                cur["lat"], cur["lng"],
+                nxt["lat"], nxt["lng"],
+                cur.get("name", ""), cur.get("place_id", ""),
+                nxt.get("name", ""), nxt.get("place_id", ""),
+            )
+            places[i]["travel_time_after"] = t
+        except Exception:
+            pass
+
+    if places:
+        places[-1]["travel_time_after"] = None
+
+    return places
 
 
 @router.patch("/{room_id}/itinerary")
@@ -315,24 +361,8 @@ async def update_itinerary(
     row = result.data
     ordered_places: list[dict] = list(body.ordered_places)
 
-    # 연속 쌍 이동 시간 전체 재계산
-    for i in range(len(ordered_places) - 1):
-        cur = ordered_places[i]
-        nxt = ordered_places[i + 1]
-        try:
-            t = await kakao_service.get_travel_time(
-                cur["lat"], cur["lng"],
-                nxt["lat"], nxt["lng"],
-                cur.get("name", ""), cur.get("place_id", ""),
-                nxt.get("name", ""), nxt.get("place_id", ""),
-            )
-            ordered_places[i]["travel_time_after"] = t
-        except Exception:
-            pass
-
-    # 마지막 장소 이동 시간 null
-    if ordered_places:
-        ordered_places[-1]["travel_time_after"] = None
+    # 헬퍼로 전구간 이동 시간 재계산
+    ordered_places = await _recalculate_all_travel_times(ordered_places)
 
     supabase.table("itineraries").upsert(
         {
@@ -341,6 +371,7 @@ async def update_itinerary(
             "ordered_places": ordered_places,
             "alternatives": row.get("alternatives") or {},
             "excluded_places": row.get("excluded_places") or [],
+            "validation_warnings": row.get("validation_warnings") or [],
         },
         on_conflict="room_id,date",
     ).execute()
@@ -350,4 +381,120 @@ async def update_itinerary(
         ordered_places=ordered_places,
         alternatives=row.get("alternatives") or {},
         excluded_places=row.get("excluded_places") or [],
+        validation_warnings=row.get("validation_warnings") or [],
+    )
+
+
+@router.post("/{room_id}/itinerary/{date}/places")
+async def add_itinerary_place(
+    room_id: Annotated[str, Path(description="여행방 ID")],
+    date: Annotated[str, Path(description="날짜 (YYYY-MM-DD)")],
+    body: AddItineraryPlaceRequest,
+) -> ItineraryDayResponse:
+    """일정 결과의 특정 날짜 타임라인 끝에 장소를 추가하고 이동 시간을 재계산한다."""
+    result = (
+        supabase.table("itineraries")
+        .select("*")
+        .eq("room_id", room_id)
+        .eq("date", date)
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="해당 날짜의 일정을 찾을 수 없습니다")
+
+    row = result.data
+    ordered_places: list[dict] = list(row["ordered_places"])
+
+    # 새 장소를 타임라인 끝에 추가
+    new_place: dict = {
+        "place_id": body.kakao_place_id,
+        "name": body.name,
+        "lat": body.lat,
+        "lng": body.lng,
+        "category": body.category,
+        "travel_time_after": None,
+    }
+    ordered_places.append(new_place)
+
+    # 전구간 이동 시간 재계산
+    ordered_places = await _recalculate_all_travel_times(ordered_places)
+
+    supabase.table("itineraries").upsert(
+        {
+            "room_id": room_id,
+            "date": date,
+            "ordered_places": ordered_places,
+            "alternatives": row.get("alternatives") or {},
+            "excluded_places": row.get("excluded_places") or [],
+            "validation_warnings": row.get("validation_warnings") or [],
+        },
+        on_conflict="room_id,date",
+    ).execute()
+
+    return ItineraryDayResponse(
+        date=date,
+        ordered_places=ordered_places,
+        alternatives=row.get("alternatives") or {},
+        excluded_places=row.get("excluded_places") or [],
+        validation_warnings=row.get("validation_warnings") or [],
+    )
+
+
+@router.delete("/{room_id}/itinerary/{date}/places/{place_id}")
+async def remove_itinerary_place(
+    room_id: Annotated[str, Path(description="여행방 ID")],
+    date: Annotated[str, Path(description="날짜 (YYYY-MM-DD)")],
+    place_id: Annotated[str, Path(description="제거할 장소 ID")],
+) -> ItineraryDayResponse:
+    """일정 결과의 특정 날짜에서 장소를 제거하고 이동 시간을 재계산한다."""
+    result = (
+        supabase.table("itineraries")
+        .select("*")
+        .eq("room_id", room_id)
+        .eq("date", date)
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="해당 날짜의 일정을 찾을 수 없습니다")
+
+    row = result.data
+    ordered_places: list[dict] = list(row["ordered_places"])
+    alternatives: dict = dict(row.get("alternatives") or {})
+
+    # 제거 대상 인덱스 탐색
+    target_idx = next(
+        (i for i, p in enumerate(ordered_places) if p["place_id"] == place_id),
+        None,
+    )
+    if target_idx is None:
+        raise HTTPException(status_code=404, detail="해당 장소를 일정에서 찾을 수 없습니다")
+
+    ordered_places.pop(target_idx)
+
+    # 해당 장소의 대안 목록도 제거
+    alternatives.pop(place_id, None)
+
+    # 전구간 이동 시간 재계산
+    ordered_places = await _recalculate_all_travel_times(ordered_places)
+
+    supabase.table("itineraries").upsert(
+        {
+            "room_id": room_id,
+            "date": date,
+            "ordered_places": ordered_places,
+            "alternatives": alternatives,
+            "excluded_places": row.get("excluded_places") or [],
+            "validation_warnings": row.get("validation_warnings") or [],
+        },
+        on_conflict="room_id,date",
+    ).execute()
+
+    return ItineraryDayResponse(
+        date=date,
+        ordered_places=ordered_places,
+        alternatives=alternatives,
+        excluded_places=row.get("excluded_places") or [],
+        validation_warnings=row.get("validation_warnings") or [],
     )

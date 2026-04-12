@@ -19,9 +19,22 @@ def check_day_density(day: dict) -> list[str]:
         )
 
     # [경고 1-2] 총 소요 시간 12시간 초과
+    # STAY 앵커(숙소)는 end_at=None이므로, end_at이 있는 마지막 장소 기준으로 계산
     if len(ordered_places) >= 2:
-        first_start = to_mod_from_str(ordered_places[0]["start_at"])
-        last_end = to_mod_from_str(ordered_places[-1]["end_at"])
+        first_place = ordered_places[0]
+        first_start_val = first_place.get("start_at")
+        if first_start_val is None:
+            return warnings
+
+        last_place_with_end = next(
+            (p for p in reversed(ordered_places) if p.get("end_at") is not None),
+            None,
+        )
+        if last_place_with_end is None:
+            return warnings
+
+        first_start = to_mod_from_str(first_start_val)
+        last_end = to_mod_from_str(last_place_with_end["end_at"])
         total_minutes = last_end - first_start
         if total_minutes > 720:
             total_hours = round(total_minutes / 60)

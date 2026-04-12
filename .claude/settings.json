@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(**/.env)",
+      "Read(**/.env.local)",
+      "Read(**/.env.*.local)"
+    ]
+  },
+  "enabledPlugins": {
+    "langchain-skills@langchain-skills": true,
+    "codex@openai-codex": true
+  }
+}

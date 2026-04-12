@@ -27,6 +27,7 @@ export default function RoomLayout({ children }: { children: React.ReactNode }) 
         const member = await getMemberByAuthId(roomId, session.user.id);
 
         if (member) {
+          localStorage.setItem('memberId', member.id);
           setIsAuthorized(true);
           setIsChecking(false);
         } else {

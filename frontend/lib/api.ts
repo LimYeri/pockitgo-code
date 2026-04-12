@@ -185,3 +185,34 @@ export async function updateItineraryOrder(
     body: JSON.stringify({ date, ordered_places: orderedPlaces }),
   });
 }
+
+/** 일정 결과의 특정 날짜 타임라인에 장소를 직접 추가한다. */
+export interface AddItineraryPlaceInput {
+  kakao_place_id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  category: PlaceCategory;
+}
+
+export async function addItineraryPlace(
+  roomId: string,
+  date: string,
+  data: AddItineraryPlaceInput
+): Promise<Itinerary> {
+  return apiFetch<Itinerary>(`/rooms/${roomId}/itinerary/${date}/places`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+/** 일정 결과의 특정 날짜 타임라인에서 장소를 제거한다. */
+export async function removeItineraryPlace(
+  roomId: string,
+  date: string,
+  placeId: string
+): Promise<Itinerary> {
+  return apiFetch<Itinerary>(`/rooms/${roomId}/itinerary/${date}/places/${placeId}`, {
+    method: 'DELETE',
+  });
+}
